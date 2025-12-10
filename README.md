@@ -43,7 +43,7 @@ Follow these steps to set up the environment, deploy the prototype, and run the 
 
 ```bash
 # Clone the repository
-git clone <your-repo-url>
+git clone https://github.com/EzzulddinFullerton/Agile-Commerce-Prototype.git
 cd agile-commerce-prototype
 
 # Install Node dependencies (Express, pg)
