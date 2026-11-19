@@ -1,107 +1,138 @@
-# Agile Commerce Prototype
+# Ecommerce Concurrency Prototype
 
-A cloud-native e-commerce platform built using a strictly enforced **Layered (n-tier) Architecture** to prioritize **Scalability, Security, and Modifiability**.
+A focused Node.js + PostgreSQL prototype that demonstrates a clean **layered (n-tier) architecture** and **race-condition-safe inventory management** using PostgreSQL row-level locking (`SELECT ... FOR UPDATE`).
 
-This prototype validates the core architectural mechanism for handling high-concurrency inventory updates using PostgreSQL's transaction management and row-level locking.
+This project validates that two users trying to buy the last item of a product at the same time results in exactly one successful order and one clean “out of stock” failure — without overselling.
 
-## ⚙️ Architecture Validation
+## Architecture
 
-| View | Component | Mechanism Tested | Status |
-| :--- | :--- | :--- | :--- |
-| **Logical View** | 4-Tier Structure | Separation of Presentation, Service, and Data Access Layers. | ✅ Passed |
-| **Process View** | Concurrency Scenario | **Row-Level Locking** (`FOR UPDATE`) to prevent race conditions during checkout. | ✅ Passed |
-| **Use Case View** | Checkout & Payment | ACID properties of the database ensure transaction integrity. | ✅ Passed |
+The codebase strictly follows a 4-layer design:
 
-## 📦 Project Structure
+| Layer              | Responsibility                            | Location              |
+|--------------------|-------------------------------------------|-----------------------|
+| Presentation       | HTTP handling & input validation          | `src/controllers/`    |
+| Service            | Business logic + transaction orchestration| `src/services/`       |
+| Data Access (DAO)  | SQL queries & locking                     | `src/daos/`           |
+| Infrastructure     | Connection pool                           | `src/config/db.js`    |
 
-The codebase is organized to mirror the Logical View of the design document:
+**Key concurrency mechanism:**
+- The service starts a transaction
+- The product row is locked with `FOR UPDATE`
+- Stock is checked and decremented under the lock
+- Order is created
+- Transaction is committed or rolled back
 
-```text
+This guarantees ACID properties and prevents the classic “last item sold twice” race condition.
+
+## Tech Stack
+
+- **Runtime**: Node.js
+- **Framework**: Express 5
+- **Database**: PostgreSQL 15+
+- **Driver**: `pg` (with connection pooling)
+
+## Project Structure
+
+```
 .
-├── src/
-│   ├── config/             # Connection Manager (db.js)
-│   ├── controllers/        # Presentation Layer (API Controllers)
-│   ├── services/           # Service Layer (Business Logic, Transactions)
-│   └── daos/               # Data Access Layer (Persistence logic, SQL)
 ├── database/
-│   └── schema.sql          # Database Schema and Seed Data
+│   └── schema.sql          # Tables + seed data (one limited item)
+├── src/
+│   ├── config/
+│   │   └── db.js           # Connection pool
+│   ├── controllers/
+│   │   └── orderController.js
+│   ├── daos/
+│   │   ├── productDAO.js   # Contains the FOR UPDATE lock
+│   │   └── orderDAO.js
+│   ├── services/
+│   │   └── orderService.js # Transaction orchestration
+│   └── app.js
 ├── package.json
 └── README.md
 ```
 
-## 🚀 Build and Run Instructions
-
-Follow these steps to set up the environment, deploy the prototype, and run the concurrency test.
+## Quick Start
 
 ### Prerequisites
+- Node.js 16+
+- PostgreSQL 15+
 
-1.  **Node.js** (v16+)
-2.  **PostgreSQL** (v15+)
-3.  `curl` command-line tool (or Postman/Insomnia for easier testing).
-
-### Step 1: Clone and Install Dependencies
-
+### 1. Install dependencies
 ```bash
-# Clone the repository
-git clone https://github.com/EzzulddinFullerton/Agile-Commerce-Prototype.git
-cd agile-commerce-prototype
-
-# Install Node dependencies (Express, pg)
+git clone https://github.com/EzzulddinFullerton/ecommerce-concurrency-prototype.git
+cd ecommerce-concurrency-prototype
 npm install
 ```
 
-### Step 2: Database Setup
+### 2. Create and seed the database
+```bash
+# Create the database
+psql -U postgres -c "CREATE DATABASE agile_commerce;"
 
-The application requires a PostgreSQL database instance named `agile_commerce`.
+# Run schema + seed data
+psql -U postgres -d agile_commerce -f ./database/schema.sql
+```
 
-1.  **Create the Database:**
-    Open your PostgreSQL terminal (`psql`) and run:
+The seed data creates a product with **stock = 1** specifically to demonstrate the race condition.
 
-    ```sql
-    CREATE DATABASE agile_commerce;
-    ```
+### 3. Configure (optional)
+You can override defaults with environment variables:
 
-2.  **Run Schema and Seed Data:**
-    This script creates the `products` and `orders` tables and inserts one crucial item with a stock quantity of **1** to set up the race condition scenario.
+```bash
+export DB_USER=postgres
+export DB_HOST=localhost
+export DB_NAME=agile_commerce
+export DB_PASSWORD=your_password
+export DB_PORT=5432
+```
 
-    ```bash
-    # Execute the schema.sql file against the new database
-    psql -U postgres -d agile_commerce -f ./database/schema.sql
-    ```
-
-### Step 3: Start the Application Server
-
-Start the Node.js application server:
-
+### 4. Start the server
 ```bash
 node src/app.js
-# Output: Agile Commerce API running on port 3000
+# → Agile Commerce API running on port 3000
 ```
 
-## 🧪 Architectural Validation: Concurrency Test
+## Concurrency Test
 
-This test directly validates the Scenario View: **Two users attempting to purchase the last item simultaneously**.
+Simulate two users trying to buy the last item at the same time:
 
-We use the Windows Command Prompt (`cmd.exe`) syntax with the `&` operator to launch two requests almost concurrently. The database's Row-Level Locking must ensure only one succeeds.
-
-**Run this single command line:**
-
+**Linux / macOS / Git Bash:**
 ```bash
-# User 1 and User 2 simultaneously attempt to buy Product ID 1 (Stock: 1)
-curl -X POST http://localhost:3000/api/checkout -H "Content-Type: application/json" -d "{\"userId\": 1, \"productId\": 1}" & curl -X POST http://localhost:3000/api/checkout -H "Content-Type: application/json" -d "{\"userId\": 2, \"productId\": 1}"
+curl -X POST http://localhost:3000/api/checkout \
+  -H "Content-Type: application/json" \
+  -d '{"userId":1,"productId":1}' & \
+curl -X POST http://localhost:3000/api/checkout \
+  -H "Content-Type: application/json" \
+  -d '{"userId":2,"productId":1}'
 ```
 
-### Expected Output
+**Windows CMD:**
+```cmd
+curl -X POST http://localhost:3000/api/checkout -H "Content-Type: application/json" -d "{\"userId\":1,\"productId\":1}" & curl -X POST http://localhost:3000/api/checkout -H "Content-Type: application/json" -d "{\"userId\":2,\"productId\":1}"
+```
 
-The system demonstrates the designed concurrency handling:
+### Expected Result
+- One request succeeds → `{ "message": "Order processed successfully", "orderId": ..., "status": "COMPLETED" }`
+- The other fails → `{ "error": "Item out of stock" }`
 
-1.  **Winner (User 1 or 2):** Successful order commitment.
-    ```json
-    {"message":"Order processed successfully","orderId":1,"status":"COMPLETED"}
-    ```
-2.  **Loser (The other user):** Transaction rollback due to inventory being depleted under lock.
-    ```json
-    {"error":"Item out of stock"}
-    ```
+Only one order is created and stock never goes negative.
 
-The separation of concerns is validated by the stack trace in the code: Controller calls Service, which initiates a database transaction, acquires a lock via DAO, checks the stock, and then commits or rolls back based on the outcome.
+## API
+
+| Method | Endpoint          | Body                                          | Description                |
+|--------|-------------------|-----------------------------------------------|----------------------------|
+| POST   | `/api/checkout`   | `{ "userId": number, "productId": number }`   | Attempt to purchase an item |
+
+## What This Prototype Intentionally Focuses On
+
+- Clean separation of concerns
+- Correct transactional boundaries
+- Real row-level locking under concurrent load
+- Demonstrable race-condition prevention
+
+It is **not** a full e-commerce platform (no auth, cart, payments, product catalog UI, etc.).
+
+## License
+
+ISC
